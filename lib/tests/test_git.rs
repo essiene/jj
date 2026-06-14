@@ -324,6 +324,30 @@ fn test_snapshot_local_bookmark_targets() -> TestResult {
 }
 
 #[test]
+fn test_classify_bookmark_move() -> TestResult {
+    let test_repo = TestRepo::init();
+    let repo = &test_repo.repo;
+
+    let mut tx = repo.start_transaction();
+    let base = write_random_commit(tx.repo_mut());
+    let advanced = write_random_commit_with_parents(tx.repo_mut(), &[&base]);
+    let diverged = write_random_commit(tx.repo_mut());
+    let repo = tx.commit("test").block_on()?;
+
+    // base -> advanced is a fast-forward (advanced descends from base).
+    assert_eq!(
+        git::classify_bookmark_move(repo.as_ref(), base.id(), advanced.id())?,
+        git::BookmarkMove::Advanced
+    );
+    // base -> an unrelated commit is a rewrite.
+    assert_eq!(
+        git::classify_bookmark_move(repo.as_ref(), base.id(), diverged.id())?,
+        git::BookmarkMove::Diverged
+    );
+    Ok(())
+}
+
+#[test]
 fn test_import_refs() -> TestResult {
     let test_repo = TestRepo::init_with_backend(TestRepoBackend::Git);
     let repo = &test_repo.repo;

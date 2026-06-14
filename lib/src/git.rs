@@ -607,6 +607,33 @@ pub fn snapshot_local_bookmark_targets(repo: &dyn Repo) -> HashMap<RefNameBuf, C
         .collect()
 }
 
+/// How a bookmark's local target moved after a fetch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BookmarkMove {
+    /// The new target is a descendant of the old target: a fast-forward.
+    Advanced,
+    /// The new target is not a descendant of the old: the head was rewritten.
+    Diverged,
+}
+
+/// Classifies how a bookmark moved from `old_target` to `new_target`.
+///
+/// `jj git sync` rebases local work onto an [`BookmarkMove::Advanced`] head; for
+/// a [`BookmarkMove::Diverged`] head it only reparents the local roots and
+/// reports the bookmark (see the design doc's "hard case"). Callers should pass
+/// only bookmarks that actually moved (`old_target != new_target`).
+pub fn classify_bookmark_move(
+    repo: &dyn Repo,
+    old_target: &CommitId,
+    new_target: &CommitId,
+) -> Result<BookmarkMove, IndexError> {
+    if repo.index().is_ancestor(old_target, new_target)? {
+        Ok(BookmarkMove::Advanced)
+    } else {
+        Ok(BookmarkMove::Diverged)
+    }
+}
+
 #[derive(Debug)]
 struct RefsToImport {
     /// Git ref `(full_name, new_target)`s to be copied to the view, sorted by
