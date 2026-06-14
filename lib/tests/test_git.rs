@@ -348,6 +348,42 @@ fn test_classify_bookmark_move() -> TestResult {
 }
 
 #[test]
+fn test_local_rebase_roots() -> TestResult {
+    let test_repo = TestRepo::init();
+    let repo = &test_repo.repo;
+
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let base = write_random_commit(mut_repo);
+    // The remote's new history: base -> r2 -> new_head.
+    let r2 = write_random_commit_with_parents(mut_repo, &[&base]);
+    let new_head = write_random_commit_with_parents(mut_repo, &[&r2]);
+    // The user's local stack on the old head.
+    let local1 = write_random_commit_with_parents(mut_repo, &[&base]);
+    let _local2 = write_random_commit_with_parents(mut_repo, &[&local1]);
+    // Another remote feature branch on the old head, owned by the remote.
+    let feature = write_random_commit_with_parents(mut_repo, &[&base]);
+    mut_repo.set_remote_bookmark(
+        RemoteRefSymbol {
+            name: "feature".as_ref(),
+            remote: "origin".as_ref(),
+        },
+        RemoteRef {
+            target: RefTarget::normal(feature.id().clone()),
+            state: RemoteRefState::Tracked,
+        },
+    );
+    let repo = tx.commit("test").block_on()?;
+
+    let roots = git::local_rebase_roots(repo.as_ref(), base.id(), new_head.id()).block_on()?;
+
+    // Only the user's local stack root is rebased: the remote's own commits
+    // (r2, new_head) and the remote-owned feature branch are excluded.
+    assert_eq!(roots, vec![local1.id().clone()]);
+    Ok(())
+}
+
+#[test]
 fn test_import_refs() -> TestResult {
     let test_repo = TestRepo::init_with_backend(TestRepoBackend::Git);
     let repo = &test_repo.repo;

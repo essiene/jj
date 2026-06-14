@@ -634,6 +634,47 @@ pub fn classify_bookmark_move(
     }
 }
 
+/// Computes the local commits to rebase when a bookmark advances from
+/// `old_target` to `new_target`.
+///
+/// These are the *roots* of the user's local work that sits on the old head: all
+/// descendants of `old_target`, minus anything already contained in the new head
+/// (the remote's own new commits, or a local change since merged upstream), minus
+/// anything reachable from a remote bookmark (commits the remote owns, e.g.
+/// another feature branch). Rebasing these roots -- and their descendants -- with
+/// [`move_commits`] leaves remote and upstream commits untouched, which is the
+/// soundness invariant in the design doc.
+///
+/// [`move_commits`]: crate::rewrite::move_commits
+pub async fn local_rebase_roots(
+    repo: &dyn Repo,
+    old_target: &CommitId,
+    new_target: &CommitId,
+) -> Result<Vec<CommitId>, RevsetEvaluationError> {
+    let remote_targets: Vec<CommitId> = repo
+        .view()
+        .all_remote_bookmarks()
+        .flat_map(|(_symbol, remote_ref)| {
+            remote_ref.target.added_ids().cloned().collect::<Vec<_>>()
+        })
+        .collect();
+    let local_work = RevsetExpression::commit(old_target.clone())
+        .descendants()
+        // Never the old head itself -- only the work built on top of it. (On an
+        // advance the old head is already excluded as an ancestor of the new
+        // head; on a diverged head it is not, so exclude it explicitly.)
+        .minus(&RevsetExpression::commit(old_target.clone()))
+        .minus(&RevsetExpression::commit(new_target.clone()).ancestors())
+        .minus(&RevsetExpression::commits(remote_targets).ancestors());
+    let roots: Vec<CommitId> = local_work
+        .roots()
+        .evaluate(repo)?
+        .stream()
+        .try_collect()
+        .await?;
+    Ok(roots)
+}
+
 #[derive(Debug)]
 struct RefsToImport {
     /// Git ref `(full_name, new_target)`s to be copied to the view, sorted by
