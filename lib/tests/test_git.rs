@@ -383,6 +383,61 @@ fn test_local_rebase_roots() -> TestResult {
     Ok(())
 }
 
+// Design-doc scenario #1: a local stack on the old head is rebased onto the new
+// head after the bookmark advances.
+#[test]
+fn test_rebase_descendants_for_sync_advance() -> TestResult {
+    let test_repo = TestRepo::init();
+    let repo = &test_repo.repo;
+
+    // main is at `base`, with a local stack local1 -> local2 on top of it.
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let base = write_random_commit(mut_repo);
+    let local1 = write_random_commit_with_parents(mut_repo, &[&base]);
+    let local2 = write_random_commit_with_parents(mut_repo, &[&local1]);
+    mut_repo.set_local_bookmark_target("main".as_ref(), RefTarget::normal(base.id().clone()));
+    let repo = tx.commit("setup").block_on()?;
+
+    // Snapshot where bookmarks point before the fetch.
+    let old_targets = git::snapshot_local_bookmark_targets(repo.as_ref());
+
+    // Simulate the fetch advancing main (base -> r2 -> new_head) and moving the
+    // local bookmark, as importing refs would.
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let r2 = write_random_commit_with_parents(mut_repo, &[&base]);
+    let new_head = write_random_commit_with_parents(mut_repo, &[&r2]);
+    mut_repo.set_local_bookmark_target("main".as_ref(), RefTarget::normal(new_head.id().clone()));
+
+    let stats =
+        git::rebase_descendants_for_sync(mut_repo, &old_targets, &git::GitSyncOptions::default())
+            .block_on()?;
+
+    // main advanced; the local stack (local1, local2) was rebased onto new_head.
+    assert_eq!(stats.bookmarks.len(), 1);
+    let synced = &stats.bookmarks[0];
+    assert_eq!(synced.bookmark.as_str(), "main");
+    assert_eq!(&synced.old_target, base.id());
+    assert_eq!(&synced.new_target, new_head.id());
+    assert!(!synced.diverged);
+    assert_eq!(synced.rebased, 2);
+    assert_eq!(synced.abandoned_empty, 0);
+
+    let repo = tx.commit("sync").block_on()?;
+
+    // The original local commits were rewritten, and the new heads descend from
+    // new_head.
+    let heads: Vec<CommitId> = repo.view().heads().iter().cloned().collect();
+    assert!(!heads.contains(local2.id()));
+    assert!(
+        heads
+            .iter()
+            .any(|head| repo.index().is_ancestor(new_head.id(), head).unwrap())
+    );
+    Ok(())
+}
+
 #[test]
 fn test_import_refs() -> TestResult {
     let test_repo = TestRepo::init_with_backend(TestRepoBackend::Git);

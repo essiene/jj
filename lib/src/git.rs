@@ -74,6 +74,10 @@ use crate::revset::RevsetEvaluationError;
 use crate::revset::RevsetExpression;
 use crate::revset::RevsetStreamExt as _;
 use crate::rewrite::EmptyBehavior;
+use crate::rewrite::MoveCommitsLocation;
+use crate::rewrite::MoveCommitsTarget;
+use crate::rewrite::RebaseOptions;
+use crate::rewrite::move_commits;
 use crate::settings::UserSettings;
 use crate::store::Store;
 use crate::str_util::StringExpression;
@@ -557,7 +561,7 @@ pub struct GitSyncOptions {
 
 impl Default for GitSyncOptions {
     fn default() -> Self {
-        GitSyncOptions {
+        Self {
             rebase_bookmarks: None,
             empty: EmptyBehavior::AbandonNewlyEmpty,
         }
@@ -577,8 +581,9 @@ pub struct BookmarkSync {
     pub rebased: usize,
     /// How many of those were dropped because they became empty.
     pub abandoned_empty: usize,
-    /// True if the head was rewritten (the new target is not a descendant of the
-    /// old) rather than fast-forwarded. See the design doc's "hard case".
+    /// True if the head was rewritten (the new target is not a descendant of
+    /// the old) rather than fast-forwarded. See the design doc's "hard
+    /// case".
     pub diverged: bool,
 }
 
@@ -593,10 +598,10 @@ pub struct GitSyncStats {
 /// fetch moves them.
 ///
 /// `jj git sync` compares this snapshot against the post-fetch targets to learn
-/// which bookmarks advanced and therefore which local commits to rebase. It uses
-/// the *local* bookmark (not the remote-tracking bookmark) on purpose: the local
-/// bookmark is the user's last-synced position, whereas a remote bookmark can
-/// point at a commit that is now hidden.
+/// which bookmarks advanced and therefore which local commits to rebase. It
+/// uses the *local* bookmark (not the remote-tracking bookmark) on purpose: the
+/// local bookmark is the user's last-synced position, whereas a remote bookmark
+/// can point at a commit that is now hidden.
 ///
 /// Conflicted bookmarks are skipped: there is no single old target to rebase
 /// off of.
@@ -618,8 +623,8 @@ pub enum BookmarkMove {
 
 /// Classifies how a bookmark moved from `old_target` to `new_target`.
 ///
-/// `jj git sync` rebases local work onto an [`BookmarkMove::Advanced`] head; for
-/// a [`BookmarkMove::Diverged`] head it only reparents the local roots and
+/// `jj git sync` rebases local work onto an [`BookmarkMove::Advanced`] head;
+/// for a [`BookmarkMove::Diverged`] head it only reparents the local roots and
 /// reports the bookmark (see the design doc's "hard case"). Callers should pass
 /// only bookmarks that actually moved (`old_target != new_target`).
 pub fn classify_bookmark_move(
@@ -637,13 +642,13 @@ pub fn classify_bookmark_move(
 /// Computes the local commits to rebase when a bookmark advances from
 /// `old_target` to `new_target`.
 ///
-/// These are the *roots* of the user's local work that sits on the old head: all
-/// descendants of `old_target`, minus anything already contained in the new head
-/// (the remote's own new commits, or a local change since merged upstream), minus
-/// anything reachable from a remote bookmark (commits the remote owns, e.g.
-/// another feature branch). Rebasing these roots -- and their descendants -- with
-/// [`move_commits`] leaves remote and upstream commits untouched, which is the
-/// soundness invariant in the design doc.
+/// These are the *roots* of the user's local work that sits on the old head:
+/// all descendants of `old_target`, minus anything already contained in the new
+/// head (the remote's own new commits, or a local change since merged
+/// upstream), minus anything reachable from a remote bookmark (commits the
+/// remote owns, e.g. another feature branch). Rebasing these roots -- and their
+/// descendants -- with [`move_commits`] leaves remote and upstream commits
+/// untouched, which is the soundness invariant in the design doc.
 ///
 /// [`move_commits`]: crate::rewrite::move_commits
 pub async fn local_rebase_roots(
@@ -673,6 +678,96 @@ pub async fn local_rebase_roots(
         .try_collect()
         .await?;
     Ok(roots)
+}
+
+/// Error from the rebase half of `jj git sync`
+/// ([`rebase_descendants_for_sync`]).
+#[derive(Debug, Error)]
+pub enum GitSyncError {
+    /// Failed to read commit ancestry.
+    #[error(transparent)]
+    Index(#[from] IndexError),
+    /// Failed to evaluate the revset of local commits to rebase.
+    #[error(transparent)]
+    RevsetEvaluation(#[from] RevsetEvaluationError),
+    /// Failed to write rebased commits.
+    #[error(transparent)]
+    Backend(#[from] BackendError),
+}
+
+/// Rebases local descendants of moved bookmarks onto their new heads -- the
+/// rebase half of `jj git sync`.
+///
+/// Call this after the fetch has imported its refs, within the same
+/// transaction. `old_local_targets` is the snapshot taken *before* the fetch
+/// (see [`snapshot_local_bookmark_targets`]); comparing it against the current
+/// local bookmarks tells us which bookmarks moved and where to.
+///
+/// Each moved bookmark's local roots (see [`local_rebase_roots`]) are rebased
+/// onto its new target, so only the user's own commits move -- never the
+/// remote's own new commits. Deleted bookmarks are not handled here: importing
+/// refs already records their commits as abandoned, so the transaction's own
+/// descendant rebase reparents their children.
+pub async fn rebase_descendants_for_sync(
+    mut_repo: &mut MutableRepo,
+    old_local_targets: &HashMap<RefNameBuf, CommitId>,
+    opts: &GitSyncOptions,
+) -> Result<GitSyncStats, GitSyncError> {
+    // Collect the moved bookmarks first, so the immutable view borrow is done
+    // before the mutable rebase below.
+    let mut moved: Vec<(RefNameBuf, CommitId, CommitId)> = Vec::new();
+    for (name, old_target) in old_local_targets {
+        let Some(new_target) = mut_repo
+            .view()
+            .get_local_bookmark(name.as_ref())
+            .as_normal()
+            .cloned()
+        else {
+            // Deleted or conflicted: handled by the import's abandon logic.
+            continue;
+        };
+        if new_target != *old_target {
+            moved.push((name.clone(), old_target.clone(), new_target));
+        }
+    }
+
+    let mut bookmarks = Vec::new();
+    for (name, old_target, new_target) in moved {
+        let diverged =
+            classify_bookmark_move(mut_repo, &old_target, &new_target)? == BookmarkMove::Diverged;
+        let roots = local_rebase_roots(mut_repo, &old_target, &new_target).await?;
+        let (rebased, abandoned_empty) = if roots.is_empty() {
+            (0, 0)
+        } else {
+            let location = MoveCommitsLocation {
+                new_parent_ids: vec![new_target.clone()],
+                new_child_ids: vec![],
+                target: MoveCommitsTarget::Roots(roots),
+            };
+            let rebase_options = RebaseOptions {
+                empty: opts.empty,
+                ..Default::default()
+            };
+            let stats = move_commits(mut_repo, &location, &rebase_options).await?;
+            (
+                (stats.num_rebased_targets + stats.num_rebased_descendants) as usize,
+                stats.num_abandoned_empty as usize,
+            )
+        };
+        bookmarks.push(BookmarkSync {
+            bookmark: name,
+            old_target,
+            new_target,
+            rebased,
+            abandoned_empty,
+            diverged,
+        });
+    }
+    // `move_commits` leaves the rewrites it made in `parent_mapping` for a final
+    // pass (see `MutableRepo::transform_commits`); flush them so the transaction
+    // can be committed.
+    mut_repo.rebase_descendants().await?;
+    Ok(GitSyncStats { bookmarks })
 }
 
 #[derive(Debug)]
