@@ -589,6 +589,24 @@ pub struct GitSyncStats {
     pub bookmarks: Vec<BookmarkSync>,
 }
 
+/// Records where every local bookmark points right now, before a `jj git sync`
+/// fetch moves them.
+///
+/// `jj git sync` compares this snapshot against the post-fetch targets to learn
+/// which bookmarks advanced and therefore which local commits to rebase. It uses
+/// the *local* bookmark (not the remote-tracking bookmark) on purpose: the local
+/// bookmark is the user's last-synced position, whereas a remote bookmark can
+/// point at a commit that is now hidden.
+///
+/// Conflicted bookmarks are skipped: there is no single old target to rebase
+/// off of.
+pub fn snapshot_local_bookmark_targets(repo: &dyn Repo) -> HashMap<RefNameBuf, CommitId> {
+    repo.view()
+        .local_bookmarks()
+        .filter_map(|(name, target)| Some((name.to_owned(), target.as_normal()?.clone())))
+        .collect()
+}
+
 #[derive(Debug)]
 struct RefsToImport {
     /// Git ref `(full_name, new_target)`s to be copied to the view, sorted by

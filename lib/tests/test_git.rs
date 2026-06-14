@@ -286,6 +286,44 @@ fn push_status_rejected_references(push_stats: GitPushStats) -> Vec<GitRefNameBu
 }
 
 #[test]
+fn test_snapshot_local_bookmark_targets() -> TestResult {
+    let test_repo = TestRepo::init();
+    let repo = &test_repo.repo;
+
+    // Two local bookmarks at distinct commits, plus a conflicted one.
+    let mut tx = repo.start_transaction();
+    let commit1 = write_random_commit(tx.repo_mut());
+    let commit2 = write_random_commit(tx.repo_mut());
+    let commit3 = write_random_commit(tx.repo_mut());
+    tx.repo_mut()
+        .set_local_bookmark_target("main".as_ref(), RefTarget::normal(commit1.id().clone()));
+    tx.repo_mut()
+        .set_local_bookmark_target("feature".as_ref(), RefTarget::normal(commit2.id().clone()));
+    // A conflicted bookmark (two "add" sides) has no single target.
+    tx.repo_mut().set_local_bookmark_target(
+        "conflicted".as_ref(),
+        RefTarget::from_legacy_form(
+            [commit2.id().clone()],
+            [commit1.id().clone(), commit3.id().clone()],
+        ),
+    );
+    let repo = tx.commit("test").block_on()?;
+
+    let targets = git::snapshot_local_bookmark_targets(repo.as_ref());
+
+    // Normal bookmarks are captured; the conflicted one is skipped (no single
+    // old target to rebase off of).
+    assert_eq!(targets.get::<RefName>("main".as_ref()), Some(commit1.id()));
+    assert_eq!(
+        targets.get::<RefName>("feature".as_ref()),
+        Some(commit2.id())
+    );
+    assert_eq!(targets.get::<RefName>("conflicted".as_ref()), None);
+    assert_eq!(targets.len(), 2);
+    Ok(())
+}
+
+#[test]
 fn test_import_refs() -> TestResult {
     let test_repo = TestRepo::init_with_backend(TestRepoBackend::Git);
     let repo = &test_repo.repo;
