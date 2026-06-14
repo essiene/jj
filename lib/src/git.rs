@@ -73,6 +73,7 @@ use crate::repo_path::RepoPath;
 use crate::revset::RevsetEvaluationError;
 use crate::revset::RevsetExpression;
 use crate::revset::RevsetStreamExt as _;
+use crate::rewrite::EmptyBehavior;
 use crate::settings::UserSettings;
 use crate::store::Store;
 use crate::str_util::StringExpression;
@@ -539,6 +540,53 @@ pub struct GitImportStats {
     /// This list doesn't include refs that are supposed to be ignored, such as
     /// refs pointing to non-commit objects.
     pub failed_ref_names: Vec<BString>,
+}
+
+/// Options controlling the rebase half of `jj git sync` (see
+/// [`GitFetch::rebase_descendants`]).
+#[derive(Clone, Debug)]
+pub struct GitSyncOptions {
+    /// Bookmarks whose local descendants should be rebased onto their moved
+    /// heads. `None` means every bookmark that moved.
+    pub rebase_bookmarks: Option<Vec<StringPattern>>,
+    /// What to do with commits that become empty after the rebase (e.g. a local
+    /// change that has since been merged upstream). Defaults to
+    /// [`EmptyBehavior::AbandonNewlyEmpty`].
+    pub empty: EmptyBehavior,
+}
+
+impl Default for GitSyncOptions {
+    fn default() -> Self {
+        GitSyncOptions {
+            rebase_bookmarks: None,
+            empty: EmptyBehavior::AbandonNewlyEmpty,
+        }
+    }
+}
+
+/// What `jj git sync` did to one bookmark whose local target moved.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BookmarkSync {
+    /// The local bookmark whose target moved.
+    pub bookmark: RefNameBuf,
+    /// The local target before the fetch.
+    pub old_target: CommitId,
+    /// The local target after the fetch.
+    pub new_target: CommitId,
+    /// How many local commits were rebased onto `new_target`.
+    pub rebased: usize,
+    /// How many of those were dropped because they became empty.
+    pub abandoned_empty: usize,
+    /// True if the head was rewritten (the new target is not a descendant of the
+    /// old) rather than fast-forwarded. See the design doc's "hard case".
+    pub diverged: bool,
+}
+
+/// Describes what the rebase half of `jj git sync` did.
+#[derive(Clone, Debug, Default)]
+pub struct GitSyncStats {
+    /// Per-bookmark rebase results.
+    pub bookmarks: Vec<BookmarkSync>,
 }
 
 #[derive(Debug)]
