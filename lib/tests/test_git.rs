@@ -438,6 +438,56 @@ fn test_rebase_descendants_for_sync_advance() -> TestResult {
     Ok(())
 }
 
+// Design-doc scenario #2: two independent local stacks (no common local root
+// other than the bookmark) are both rebased onto the new head.
+#[test]
+fn test_rebase_descendants_for_sync_no_common_root() -> TestResult {
+    let test_repo = TestRepo::init();
+    let repo = &test_repo.repo;
+
+    // main at base, with two independent local stacks on it: l1 -> l3 and
+    // l2 -> l4.
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let base = write_random_commit(mut_repo);
+    let l1 = write_random_commit_with_parents(mut_repo, &[&base]);
+    let l3 = write_random_commit_with_parents(mut_repo, &[&l1]);
+    let l2 = write_random_commit_with_parents(mut_repo, &[&base]);
+    let l4 = write_random_commit_with_parents(mut_repo, &[&l2]);
+    mut_repo.set_local_bookmark_target("main".as_ref(), RefTarget::normal(base.id().clone()));
+    let repo = tx.commit("setup").block_on()?;
+
+    let old_targets = git::snapshot_local_bookmark_targets(repo.as_ref());
+
+    // main advances to a new head.
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let new_head = write_random_commit_with_parents(mut_repo, &[&base]);
+    mut_repo.set_local_bookmark_target("main".as_ref(), RefTarget::normal(new_head.id().clone()));
+
+    let stats =
+        git::rebase_descendants_for_sync(mut_repo, &old_targets, &git::GitSyncOptions::default())
+            .block_on()?;
+
+    // Both stacks (l1, l3, l2, l4 -- four commits) were rebased onto new_head.
+    assert_eq!(stats.bookmarks.len(), 1);
+    assert_eq!(stats.bookmarks[0].rebased, 4);
+    assert_eq!(stats.bookmarks[0].abandoned_empty, 0);
+
+    let repo = tx.commit("sync").block_on()?;
+
+    // The original stack tips are gone, and exactly two heads descend from the
+    // new head (the rebased tips of both stacks).
+    let heads: Vec<CommitId> = repo.view().heads().iter().cloned().collect();
+    assert!(!heads.iter().any(|head| head == l3.id() || head == l4.id()));
+    let descending = heads
+        .iter()
+        .filter(|head| repo.index().is_ancestor(new_head.id(), head).unwrap())
+        .count();
+    assert_eq!(descending, 2);
+    Ok(())
+}
+
 #[test]
 fn test_import_refs() -> TestResult {
     let test_repo = TestRepo::init_with_backend(TestRepoBackend::Git);
