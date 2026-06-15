@@ -536,6 +536,51 @@ fn test_rebase_descendants_for_sync_scoped_to_bookmark() -> TestResult {
     Ok(())
 }
 
+// Design-doc "hard case" (#7): when the remote head is rewritten rather than
+// advanced, the local work is still reparented onto it and the bookmark is
+// flagged `diverged` for the user to inspect.
+#[test]
+fn test_rebase_descendants_for_sync_diverged() -> TestResult {
+    let test_repo = TestRepo::init();
+    let repo = &test_repo.repo;
+
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let base = write_random_commit(mut_repo);
+    let local = write_random_commit_with_parents(mut_repo, &[&base]);
+    mut_repo.set_local_bookmark_target("main".as_ref(), RefTarget::normal(base.id().clone()));
+    let repo = tx.commit("setup").block_on()?;
+
+    let old_targets = git::snapshot_local_bookmark_targets(repo.as_ref());
+
+    // main is rewritten to an unrelated commit (not a descendant of base).
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let rewritten = write_random_commit(mut_repo);
+    mut_repo.set_local_bookmark_target("main".as_ref(), RefTarget::normal(rewritten.id().clone()));
+
+    let stats =
+        git::rebase_descendants_for_sync(mut_repo, &old_targets, &git::GitSyncOptions::default())
+            .block_on()?;
+
+    assert_eq!(stats.bookmarks.len(), 1);
+    let bookmark = &stats.bookmarks[0];
+    assert!(bookmark.diverged);
+    // Only the local commit moves; the old head itself is not rebased.
+    assert_eq!(bookmark.rebased, 1);
+
+    let repo = tx.commit("sync").block_on()?;
+    // The local commit now descends from the rewritten head.
+    let heads: Vec<CommitId> = repo.view().heads().iter().cloned().collect();
+    assert!(!heads.iter().any(|head| head == local.id()));
+    assert!(
+        heads
+            .iter()
+            .any(|head| repo.index().is_ancestor(rewritten.id(), head).unwrap())
+    );
+    Ok(())
+}
+
 #[test]
 fn test_import_refs() -> TestResult {
     let test_repo = TestRepo::init_with_backend(TestRepoBackend::Git);
