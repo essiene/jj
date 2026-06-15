@@ -21,6 +21,16 @@
     `jj git fetch [--remote <remote>]`
   Notes: There is no support for fetching into non-Git repos yet.
 
+- Use case: Fetch and rebase local work onto the updated bookmarks
+  Git command: >
+    `git pull --rebase [<remote>]`
+  Jujutsu command: >
+    `jj git sync [--remote <remote>]`
+  Notes: >
+    Fetches every bookmark and rebases your local descendants onto their new
+    heads in one undoable operation. Use `--bookmark` to narrow which local
+    work is rebased.
+
 # TODO: This only affects tracked branches now.
 - Use case: Update a remote repo with all bookmarks/branches from the local repo
   Git command: >

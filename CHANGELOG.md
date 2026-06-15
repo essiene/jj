@@ -30,6 +30,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### New features
 
+* `jj git sync` fetches from the remote and rebases local descendants onto the
+  updated bookmark heads in a single, undoable operation.
+  [#1039](https://github.com/jj-vcs/jj/issues/1039)
+
 * `jj show` now supports `--reversed` flag.
 
 * `jj` now looks for config files in `/etc/jj`.
