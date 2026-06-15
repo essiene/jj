@@ -21,6 +21,7 @@ use jj_lib::git;
 use jj_lib::git::FetchTagsOverride;
 use jj_lib::git::GitFetch;
 use jj_lib::git::GitFetchRefExpression;
+use jj_lib::git::GitImportStats;
 use jj_lib::git::GitSettings;
 use jj_lib::git::IgnoredRefspec;
 use jj_lib::git::IgnoredRefspecs;
@@ -168,8 +169,6 @@ pub async fn cmd_git_fetch(
     }
 
     let mut tx = workspace_command.start_transaction();
-    let remote_settings = tx.settings().remote_settings()?;
-
     let is_specific = args.branches.is_some() || args.tags.is_some();
     let common_bookmark_expr = match &args.branches {
         Some(texts) => Some(parse_union_name_patterns(ui, texts)?),
@@ -179,9 +178,52 @@ pub async fn cmd_git_fetch(
         Some(texts) => Some(parse_union_name_patterns(ui, texts)?),
         None => is_specific.then(StringExpression::none),
     };
+
+    let import_stats = fetch_and_import_refs(
+        ui,
+        &mut tx,
+        &matching_remotes,
+        common_bookmark_expr.as_ref(),
+        common_tag_expr.as_ref(),
+        args.tracked,
+    )
+    .await?;
+    print_git_import_stats(ui, &tx, &import_stats)?;
+
+    if let Some(bookmark_expr) = &common_bookmark_expr {
+        warn_if_branches_not_found(ui, &tx, bookmark_expr, &matching_remotes)?;
+    }
+    // TODO: warn_if_tags_not_found()
+    tx.finish(
+        ui,
+        format!(
+            "fetch from git remote(s) {}",
+            matching_remotes.iter().map(|n| n.as_symbol()).join(",")
+        ),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Fetches `matching_remotes` into `tx` and imports the refs, returning the
+/// import stats. This is the fetch half shared by `jj git fetch` and
+/// `jj git sync`.
+///
+/// `common_bookmark_expr`/`common_tag_expr` are the patterns parsed from
+/// `--branch`/`--tag` when given; `None` means use each remote's configured
+/// default fetch refspecs. `tracked` restricts the fetch to already-tracked refs.
+pub(crate) async fn fetch_and_import_refs(
+    ui: &mut Ui,
+    tx: &mut WorkspaceCommandTransaction<'_>,
+    matching_remotes: &[&RemoteName],
+    common_bookmark_expr: Option<&StringExpression>,
+    common_tag_expr: Option<&StringExpression>,
+    tracked: bool,
+) -> Result<GitImportStats, CommandError> {
+    let remote_settings = tx.settings().remote_settings()?;
     let mut expansions = Vec::with_capacity(matching_remotes.len());
-    if args.tracked {
-        for remote in &matching_remotes {
+    if tracked {
+        for remote in matching_remotes {
             let bookmark = StringExpression::union_all(
                 tx.repo()
                     .view()
@@ -205,8 +247,8 @@ pub async fn cmd_git_fetch(
         }
     } else {
         let git_repo = get_git_backend(tx.repo_mut().store())?.git_repo();
-        for remote in &matching_remotes {
-            let bookmark = if let Some(expr) = &common_bookmark_expr {
+        for remote in matching_remotes {
+            let bookmark = if let Some(expr) = common_bookmark_expr {
                 expr.clone()
             } else if let Some(expr) = parse_remote_fetch_bookmarks(ui, &remote_settings, remote)? {
                 expr
@@ -215,7 +257,7 @@ pub async fn cmd_git_fetch(
                 warn_ignored_refspecs(ui, remote, ignored)?;
                 expr
             };
-            let (tag, no_implicit_tags) = if let Some(expr) = &common_tag_expr {
+            let (tag, no_implicit_tags) = if let Some(expr) = common_tag_expr {
                 (expr.clone(), true)
             } else if let Some(expr) = parse_remote_fetch_tags(ui, &remote_settings, remote)? {
                 (expr, true)
@@ -236,7 +278,6 @@ pub async fn cmd_git_fetch(
         git_settings.to_subprocess_options(),
         &import_options,
     )?;
-
     for (remote, expanded, no_implicit_tags) in expansions {
         let mut callback = GitSubprocessUi::new(ui);
         // Disable implicit tag fetching if patterns are explicitly set. NoTags
@@ -244,23 +285,8 @@ pub async fn cmd_git_fetch(
         let fetch_tags = no_implicit_tags.then_some(FetchTagsOverride::NoTags);
         git_fetch.fetch(remote, expanded, &mut callback, None, fetch_tags)?;
     }
-
     let import_stats = git_fetch.import_refs().await?;
-    print_git_import_stats(ui, &tx, &import_stats)?;
-
-    if let Some(bookmark_expr) = &common_bookmark_expr {
-        warn_if_branches_not_found(ui, &tx, bookmark_expr, &matching_remotes)?;
-    }
-    // TODO: warn_if_tags_not_found()
-    tx.finish(
-        ui,
-        format!(
-            "fetch from git remote(s) {}",
-            matching_remotes.iter().map(|n| n.as_symbol()).join(",")
-        ),
-    )
-    .await?;
-    Ok(())
+    Ok(import_stats)
 }
 
 const DEFAULT_REMOTE: &RemoteName = RemoteName::new("origin");
