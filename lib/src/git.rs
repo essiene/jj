@@ -717,6 +717,15 @@ pub async fn rebase_descendants_for_sync(
     // before the mutable rebase below.
     let mut moved: Vec<(RefNameBuf, CommitId, CommitId)> = Vec::new();
     for (name, old_target) in old_local_targets {
+        if let Some(patterns) = &opts.rebase_bookmarks {
+            // Scope the rebase to the requested bookmarks (the `-b` flag).
+            if !patterns
+                .iter()
+                .any(|pattern| pattern.to_matcher().is_match(name.as_str()))
+            {
+                continue;
+            }
+        }
         let Some(new_target) = mut_repo
             .view()
             .get_local_bookmark(name.as_ref())

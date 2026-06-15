@@ -85,6 +85,7 @@ use jj_lib::settings::UserSettings;
 use jj_lib::signing::Signer;
 use jj_lib::str_util::StringExpression;
 use jj_lib::str_util::StringMatcher;
+use jj_lib::str_util::StringPattern;
 use jj_lib::workspace::Workspace;
 use maplit::btreemap;
 use maplit::hashset;
@@ -485,6 +486,53 @@ fn test_rebase_descendants_for_sync_no_common_root() -> TestResult {
         .filter(|head| repo.index().is_ancestor(new_head.id(), head).unwrap())
         .count();
     assert_eq!(descending, 2);
+    Ok(())
+}
+
+// Design-doc scenario #3: with `rebase_bookmarks` set, only the named
+// bookmark's local work is rebased; other advanced bookmarks are left alone.
+#[test]
+fn test_rebase_descendants_for_sync_scoped_to_bookmark() -> TestResult {
+    let test_repo = TestRepo::init();
+    let repo = &test_repo.repo;
+
+    // Two unrelated bookmarks, each with a local child commit.
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let base1 = write_random_commit(mut_repo);
+    let _local1 = write_random_commit_with_parents(mut_repo, &[&base1]);
+    let base2 = write_random_commit(mut_repo);
+    let local2 = write_random_commit_with_parents(mut_repo, &[&base2]);
+    mut_repo.set_local_bookmark_target("br1".as_ref(), RefTarget::normal(base1.id().clone()));
+    mut_repo.set_local_bookmark_target("br2".as_ref(), RefTarget::normal(base2.id().clone()));
+    let repo = tx.commit("setup").block_on()?;
+
+    let old_targets = git::snapshot_local_bookmark_targets(repo.as_ref());
+
+    // Both bookmarks advance.
+    let mut tx = repo.start_transaction();
+    let mut_repo = tx.repo_mut();
+    let new1 = write_random_commit_with_parents(mut_repo, &[&base1]);
+    let new2 = write_random_commit_with_parents(mut_repo, &[&base2]);
+    mut_repo.set_local_bookmark_target("br1".as_ref(), RefTarget::normal(new1.id().clone()));
+    mut_repo.set_local_bookmark_target("br2".as_ref(), RefTarget::normal(new2.id().clone()));
+
+    // But we only ask to rebase br1.
+    let opts = git::GitSyncOptions {
+        rebase_bookmarks: Some(vec![StringPattern::exact("br1")]),
+        ..Default::default()
+    };
+    let stats = git::rebase_descendants_for_sync(mut_repo, &old_targets, &opts).block_on()?;
+
+    // Only br1 was synced; br2's local commit is untouched.
+    assert_eq!(stats.bookmarks.len(), 1);
+    assert_eq!(stats.bookmarks[0].bookmark.as_str(), "br1");
+    assert_eq!(stats.bookmarks[0].rebased, 1);
+
+    let repo = tx.commit("sync").block_on()?;
+    // br2's commit was not rebased: it still descends from base2, not new2.
+    assert!(repo.index().is_ancestor(base2.id(), local2.id()).unwrap());
+    assert!(!repo.index().is_ancestor(new2.id(), local2.id()).unwrap());
     Ok(())
 }
 
