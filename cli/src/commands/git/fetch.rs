@@ -30,6 +30,7 @@ use jj_lib::git::get_git_backend;
 use jj_lib::git::load_default_fetch_bookmarks;
 use jj_lib::ref_name::RefName;
 use jj_lib::ref_name::RemoteName;
+use jj_lib::ref_name::RemoteNameBuf;
 use jj_lib::repo::Repo as _;
 use jj_lib::str_util::StringExpression;
 
@@ -136,37 +137,16 @@ pub async fn cmd_git_fetch(
     args: &GitFetchArgs,
 ) -> Result<(), CommandError> {
     let mut workspace_command = command.workspace_helper(ui).await?;
-    let remote_expr = if args.all_remotes {
-        StringExpression::all()
-    } else if let Some(remotes) = &args.remotes {
-        parse_union_name_patterns(ui, remotes)?
-    } else {
-        get_default_fetch_remotes(ui, &workspace_command)?
-    };
-    let remote_matcher = remote_expr.to_matcher();
-
-    let all_remotes = git::get_all_remote_names(workspace_command.repo().store())?;
-    let matching_remotes: Vec<&RemoteName> = all_remotes
-        .iter()
-        .filter(|r| remote_matcher.is_match(r.as_str()))
-        .map(AsRef::as_ref)
-        .collect();
-    let mut unmatched_remotes = remote_expr
-        .exact_strings()
-        .map(RemoteName::new)
-        // do linear search. all_remotes should be small.
-        .filter(|&name| all_remotes.iter().all(|r| r != name))
-        .peekable();
-    if unmatched_remotes.peek().is_some() {
-        writeln!(
-            ui.warning_default(),
-            "No matching remotes for names: {}",
-            unmatched_remotes.map(|name| name.as_symbol()).join(", ")
-        )?;
-    }
-    if matching_remotes.is_empty() {
+    let remotes = resolve_fetch_remotes(
+        ui,
+        &workspace_command,
+        args.all_remotes,
+        args.remotes.as_deref(),
+    )?;
+    if remotes.is_empty() {
         return Err(user_error("No git remotes to fetch from"));
     }
+    let matching_remotes: Vec<&RemoteName> = remotes.iter().map(AsRef::as_ref).collect();
 
     let mut tx = workspace_command.start_transaction();
     let is_specific = args.branches.is_some() || args.tags.is_some();
@@ -211,7 +191,8 @@ pub async fn cmd_git_fetch(
 ///
 /// `common_bookmark_expr`/`common_tag_expr` are the patterns parsed from
 /// `--branch`/`--tag` when given; `None` means use each remote's configured
-/// default fetch refspecs. `tracked` restricts the fetch to already-tracked refs.
+/// default fetch refspecs. `tracked` restricts the fetch to already-tracked
+/// refs.
 pub(crate) async fn fetch_and_import_refs(
     ui: &mut Ui,
     tx: &mut WorkspaceCommandTransaction<'_>,
@@ -290,6 +271,49 @@ pub(crate) async fn fetch_and_import_refs(
 }
 
 const DEFAULT_REMOTE: &RemoteName = RemoteName::new("origin");
+
+/// Resolves which remotes a fetch/sync should act on, warning about any
+/// explicitly-named remotes that don't exist. Shared by `jj git fetch` and
+/// `jj git sync`.
+///
+/// `all_remotes` corresponds to `--all-remotes`; `remotes` to `--remote`
+/// patterns; neither means the configured default fetch remotes.
+pub(crate) fn resolve_fetch_remotes(
+    ui: &Ui,
+    workspace_command: &WorkspaceCommandHelper,
+    all_remotes: bool,
+    remotes: Option<&[String]>,
+) -> Result<Vec<RemoteNameBuf>, CommandError> {
+    let remote_expr = if all_remotes {
+        StringExpression::all()
+    } else if let Some(remotes) = remotes {
+        parse_union_name_patterns(ui, remotes)?
+    } else {
+        get_default_fetch_remotes(ui, workspace_command)?
+    };
+    let remote_matcher = remote_expr.to_matcher();
+
+    let all_remote_names = git::get_all_remote_names(workspace_command.repo().store())?;
+    let matching: Vec<RemoteNameBuf> = all_remote_names
+        .iter()
+        .filter(|r| remote_matcher.is_match(r.as_str()))
+        .cloned()
+        .collect();
+    let mut unmatched_remotes = remote_expr
+        .exact_strings()
+        .map(RemoteName::new)
+        // do linear search. all_remote_names should be small.
+        .filter(|&name| all_remote_names.iter().all(|r| r != name))
+        .peekable();
+    if unmatched_remotes.peek().is_some() {
+        writeln!(
+            ui.warning_default(),
+            "No matching remotes for names: {}",
+            unmatched_remotes.map(|name| name.as_symbol()).join(", ")
+        )?;
+    }
+    Ok(matching)
+}
 
 fn get_default_fetch_remotes(
     ui: &Ui,
