@@ -1,0 +1,14 @@
+{
+  "id": "1464b76a70854656c7147485642d9bbe",
+  "type": "AddProgression",
+  "timestamp": "2026-06-18T02:58:31.980288122Z",
+  "payload": {
+    "ID": "246f7d98f7e2a8cc6b9fd3a02b820f9d",
+    "Date": "2026-06-14T22:23:34Z",
+    "Note": "lib: compute local rebase roots for an advanced bookmark\n",
+    "BaseCommit": "c9148ae6e05e3b430b2661d5c46c1eebd6707966",
+    "HeadCommit": "e4967052791148f7052dbfb21b43a251a753ce85",
+    "Diff": ""
+  },
+  "counter": 2
+}
