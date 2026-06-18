@@ -1,0 +1,22 @@
+{
+  "id": "094cd4510e31f9beb4ebf3653d2c9597",
+  "type": "CreateReview",
+  "timestamp": "2026-06-18T02:58:31.980490514Z",
+  "payload": {
+    "Name": "push-vlnzmtxnxxtv",
+    "Author": "essiene@gmail.com",
+    "CreationDate": "2026-06-15T15:12:40Z",
+    "ModificationDate": "2026-06-15T15:12:40Z",
+    "Progressions": [
+      {
+        "ID": "",
+        "Date": "2026-06-15T15:12:40Z",
+        "Note": "cli: end-to-end test for jj git sync\n",
+        "BaseCommit": "2c03627fcca8ac5c92552778026075e44af72b76",
+        "HeadCommit": "b6aa7c7ef5cf85139daebc94c5e0e46f1ddcbe43",
+        "Diff": ""
+      }
+    ]
+  },
+  "counter": 1
+}
