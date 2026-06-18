@@ -1,0 +1,14 @@
+{
+  "id": "0b0ac30397b7b0fe00004ac68d3eed78",
+  "type": "AddProgression",
+  "timestamp": "2026-06-18T02:58:31.980367155Z",
+  "payload": {
+    "ID": "91f4d14e5f02d134b586c18d2dce7645",
+    "Date": "2026-06-14T22:11:13Z",
+    "Note": "lib: classify a fetched bookmark move as advance or diverged\n",
+    "BaseCommit": "02e6b79211ce3f44310780b1b34cb9c701057356",
+    "HeadCommit": "3a7cf686975ae487eebb4b5600a148d10e508c17",
+    "Diff": ""
+  },
+  "counter": 2
+}
