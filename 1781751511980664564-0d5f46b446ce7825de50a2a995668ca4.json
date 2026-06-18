@@ -1,0 +1,22 @@
+{
+  "id": "0d5f46b446ce7825de50a2a995668ca4",
+  "type": "CreateReview",
+  "timestamp": "2026-06-18T02:58:31.980664564Z",
+  "payload": {
+    "Name": "push-zqmmtszntwnt",
+    "Author": "essiene@gmail.com",
+    "CreationDate": "2026-06-15T11:53:05Z",
+    "ModificationDate": "2026-06-15T11:53:05Z",
+    "Progressions": [
+      {
+        "ID": "",
+        "Date": "2026-06-15T11:53:05Z",
+        "Note": "cli: extract reusable resolve_fetch_remotes\n",
+        "BaseCommit": "091bd66600d80dcbbc5147d4c41004fdc75a323d",
+        "HeadCommit": "835bb43ae922351d1c646053e5159ec0d60cf06e",
+        "Diff": ""
+      }
+    ]
+  },
+  "counter": 1
+}
