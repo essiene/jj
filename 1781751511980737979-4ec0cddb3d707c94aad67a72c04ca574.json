@@ -1,0 +1,22 @@
+{
+  "id": "4ec0cddb3d707c94aad67a72c04ca574",
+  "type": "CreateReview",
+  "timestamp": "2026-06-18T02:58:31.980737979Z",
+  "payload": {
+    "Name": "push-zrozvxynxuss",
+    "Author": "essiene@gmail.com",
+    "CreationDate": "2026-06-15T11:56:48Z",
+    "ModificationDate": "2026-06-15T11:56:48Z",
+    "Progressions": [
+      {
+        "ID": "",
+        "Date": "2026-06-15T11:56:48Z",
+        "Note": "cli: add `jj git sync` command\n",
+        "BaseCommit": "35c71a6b15e966d8472251d8c2d5869419bc609f",
+        "HeadCommit": "030b459d64f61283ab64a0acd8e535ef3163ae9f",
+        "Diff": ""
+      }
+    ]
+  },
+  "counter": 1
+}
