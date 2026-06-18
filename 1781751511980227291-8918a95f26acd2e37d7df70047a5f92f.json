@@ -1,0 +1,22 @@
+{
+  "id": "8918a95f26acd2e37d7df70047a5f92f",
+  "type": "CreateReview",
+  "timestamp": "2026-06-18T02:58:31.980227291Z",
+  "payload": {
+    "Name": "push-pzzzylvxpxro",
+    "Author": "essiene@gmail.com",
+    "CreationDate": "2026-06-15T00:35:00Z",
+    "ModificationDate": "2026-06-15T00:35:00Z",
+    "Progressions": [
+      {
+        "ID": "",
+        "Date": "2026-06-15T00:35:00Z",
+        "Note": "lib: test git sync flags a diverged (rewritten) bookmark (#7)\n",
+        "BaseCommit": "13b47e123d4074a0b0dca87295b1605afd411f82",
+        "HeadCommit": "cb9ed79785666174a261ce46420f653668124c5a",
+        "Diff": ""
+      }
+    ]
+  },
+  "counter": 1
+}
